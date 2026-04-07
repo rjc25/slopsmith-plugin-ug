@@ -1,0 +1,13 @@
+<div class="max-w-4xl mx-auto px-6 pt-24 pb-16">
+    <button onclick="showScreen('home')" class="text-gray-500 hover:text-white text-sm mb-6 flex items-center gap-1">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg> Back
+    </button>
+    <h2 class="text-3xl font-bold text-white mb-2">Create CDLC from Tab</h2>
+    <p class="text-gray-500 mb-8">Search Ultimate Guitar for Guitar Pro tabs and convert them into playable CDLC with MIDI audio.</p>
+    <div class="flex gap-3 mb-8">
+        <input type="text" id="ug-search" placeholder="Search: artist - song" onkeydown="if(event.key==='Enter')searchUG()"
+            class="flex-1 bg-dark-700 border border-gray-800 rounded-xl px-4 py-2.5 text-sm text-gray-300 placeholder-gray-600 focus:border-accent/50 outline-none">
+        <button onclick="searchUG()" class="bg-accent hover:bg-accent-light px-6 py-2.5 rounded-xl text-sm font-semibold text-white transition">Search</button>
+    </div>
+    <div id="ug-list" class="space-y-2"></div>
+</div>

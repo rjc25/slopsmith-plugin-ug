@@ -1,0 +1,10 @@
+{
+  "id": "ultimate_guitar",
+  "name": "Create from Tab",
+  "version": "1.0.0",
+  "private": false,
+  "nav": { "label": "Create from Tab", "screen": "create" },
+  "screen": "screen.html",
+  "script": "screen.js",
+  "routes": "routes.py"
+}
