@@ -1,6 +1,7 @@
 """Ultimate Guitar plugin — API routes for searching tabs and building CDLC."""
 
 import asyncio
+import base64
 import os
 import tempfile
 from pathlib import Path
@@ -45,14 +46,71 @@ def setup(app, context):
         except Exception as e:
             return {"error": str(e)}
 
+    @app.post("/api/plugins/ultimate_guitar/upload_audio")
+    async def upload_audio(data: dict):
+        """Receive an audio file as base64, save to temp, return server path."""
+        audio_filename = data.get("filename", "")
+        audio_b64 = data.get("data", "")
+        if not audio_filename or not audio_b64:
+            return {"error": "No audio file data"}
+
+        try:
+            audio_data = base64.b64decode(audio_b64)
+        except Exception:
+            return {"error": "Invalid audio file data"}
+
+        audio_ext = Path(audio_filename).suffix.lower()
+        if audio_ext not in ('.mp3', '.ogg', '.wav', '.flac'):
+            return {"error": f"Unsupported audio format ({audio_ext}). Use MP3, OGG, WAV, or FLAC."}
+
+        tmp_dir = Path(tempfile.mkdtemp())
+        tmp = tmp_dir / audio_filename
+        tmp.write_bytes(audio_data)
+        return {"audio_path": str(tmp)}
+
     @app.websocket("/ws/plugins/ultimate_guitar/build")
-    async def ws_build(websocket: WebSocket, tab_url: str):
-        """Build CDLC from a UG tab URL with real-time progress."""
+    async def ws_build(websocket: WebSocket, tab_url: str,
+                       audio_path: str = "",
+                       audio_local_path: str = "",
+                       stem_split: str = "",
+                       replicate_key: str = ""):
+        """Build CDLC from a UG tab URL with real-time progress.
+
+        Supports optional real audio (via uploaded path or local path),
+        auto-sync of chart timing to real audio, and Demucs stem separation.
+        """
         await websocket.accept()
 
         dlc = _get_dlc_dir()
         if not dlc:
             await websocket.send_json({"error": "DLC folder not configured"})
+            await websocket.close()
+            return
+
+        # Resolve real audio file if provided
+        audio_tmp_path = None
+        use_real_audio = False
+
+        if audio_path and Path(audio_path).exists():
+            audio_tmp_path = audio_path
+            use_real_audio = True
+        elif audio_local_path:
+            p = Path(audio_local_path)
+            if not p.exists():
+                await websocket.send_json({"error": f"Audio file not found: {audio_local_path}"})
+                await websocket.close()
+                return
+            if p.suffix.lower() not in ('.mp3', '.ogg', '.wav', '.flac'):
+                await websocket.send_json({"error": f"Unsupported audio format ({p.suffix}). Use MP3, OGG, WAV, or FLAC."})
+                await websocket.close()
+                return
+            audio_tmp_path = str(p)
+            use_real_audio = True
+
+        do_stems = stem_split == "1" and use_real_audio
+
+        if do_stems and not replicate_key:
+            await websocket.send_json({"error": "Replicate API key required for stem separation"})
             await websocket.close()
             return
 
@@ -63,7 +121,7 @@ def setup(app, context):
                 progress_queue.put_nowait({"stage": stage, "progress": pct})
 
             try:
-                import base64, re
+                import re
 
                 report("Downloading tab from Ultimate Guitar...", 5)
                 try:
@@ -100,48 +158,107 @@ def setup(app, context):
                     return
 
                 arr_names = [name_map.get(i, "Lead") for i in track_indices]
-                report(f"Selected {len(track_indices)} tracks: {', '.join(arr_names)}", 25)
+                report(f"Selected {len(track_indices)} tracks: {', '.join(arr_names)}", 20)
 
-                report("Generating MIDI audio...", 35)
+                # Always generate MIDI audio (needed for sync reference even with real audio)
+                report("Generating MIDI audio...", 25)
                 midi_audio = os.path.join(tempfile.mkdtemp(), "midi")
                 midi_audio_path = gp_to_audio(str(gp_tmp), midi_audio)
 
-                report("Converting tab to Rocksmith XML...", 55)
+                # Determine final audio and offset
+                final_audio_path = midi_audio_path
+                audio_offset = 0.0
+
+                if use_real_audio and audio_tmp_path:
+                    final_audio_path = audio_tmp_path
+
+                    # Auto-sync: cross-correlate MIDI against real audio
+                    report("Auto-syncing chart to audio...", 35)
+                    try:
+                        from audio_sync import find_offset
+                        offset, confidence = find_offset(midi_audio_path, audio_tmp_path)
+                        audio_offset = offset
+                        conf_str = f"(confidence: {confidence:.1f}x)"
+                        if confidence < 3.0:
+                            conf_str += " [LOW - audio may differ significantly]"
+                        report(f"Auto-sync offset: {offset:+.3f}s {conf_str}", 42)
+                    except Exception as e:
+                        report(f"Auto-sync failed ({e}), using offset 0.0", 42)
+                        audio_offset = 0.0
+
+                report("Converting tab to Rocksmith XML...", 48)
                 xml_dir = tempfile.mkdtemp()
                 xml_files = convert_file(str(gp_tmp), xml_dir,
                                          track_indices=track_indices,
-                                         audio_offset=0.0,
+                                         audio_offset=audio_offset,
                                          arrangement_names=name_map)
 
                 title = song.title or gp_tmp.stem
                 artist = song.artist or "Unknown"
                 safe_t = re.sub(r'[<>:"/\\|?*]', '_', title)
                 safe_a = re.sub(r'[<>:"/\\|?*]', '_', artist)
-                output = str(dlc / f"{safe_t}_{safe_a}_midi_p.psarc")
+
+                # MIDI suffix only when using MIDI audio
+                if use_real_audio:
+                    output = str(dlc / f"{safe_t}_{safe_a}_p.psarc")
+                    display_title = title
+                else:
+                    output = str(dlc / f"{safe_t}_{safe_a}_midi_p.psarc")
+                    display_title = f"{title} (MIDI)"
 
                 def on_progress(msg, pct):
-                    mapped = 65 + pct * 0.3
+                    mapped = 55 + pct * 0.25
                     report(msg, mapped)
 
-                report("Compiling SNG and packing PSARC...", 65)
+                report("Compiling SNG and packing PSARC...", 55)
                 build_cdlc(
                     xml_paths=xml_files,
                     arrangement_names=arr_names,
-                    audio_path=midi_audio_path,
-                    title=f"{title} (MIDI)",
+                    audio_path=final_audio_path,
+                    title=display_title,
                     artist=artist,
                     album=song.album or "",
                     output_path=output,
                     on_progress=on_progress,
                 )
 
-                progress_queue.put_nowait({
+                # Stem separation (only with real audio)
+                stem_info = None
+                if do_stems:
+                    report("Separating stems with Demucs...", 82)
+                    try:
+                        from stem_separate import separate_stems
+                        stem_dir = Path(output).parent / f"{safe_t}_{safe_a}_stems"
+
+                        def on_stem_progress(msg, stem=None):
+                            report(f"Stems: {msg}", 85 if not stem else 90)
+
+                        stems = separate_stems(
+                            audio_path=Path(final_audio_path),
+                            output_dir=stem_dir,
+                            api_token=replicate_key,
+                            on_progress=on_stem_progress,
+                        )
+                        stem_names = list(stems.keys())
+                        stem_info = f"Stems saved: {', '.join(stem_names)} in {stem_dir.name}/"
+                        report(f"Stem separation complete ({len(stems)} stems)", 98)
+                    except Exception as e:
+                        report(f"Stem separation failed: {e}", 98)
+                        stem_info = f"Stem separation failed: {e}"
+
+                done_msg = {
                     "done": True,
                     "progress": 100,
                     "stage": "Complete!",
                     "filename": Path(output).name,
                     "tracks": ", ".join(arr_names),
-                })
+                }
+                if use_real_audio:
+                    done_msg["audio_offset"] = f"{audio_offset:+.3f}s"
+                if stem_info:
+                    done_msg["stems"] = stem_info
+
+                progress_queue.put_nowait(done_msg)
 
             except Exception as e:
                 import traceback

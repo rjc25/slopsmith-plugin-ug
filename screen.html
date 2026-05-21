@@ -3,11 +3,91 @@
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg> Back
     </button>
     <h2 class="text-3xl font-bold text-white mb-2">Create CDLC from Tab</h2>
-    <p class="text-gray-500 mb-8">Search Ultimate Guitar for Guitar Pro tabs and convert them into playable CDLC with MIDI audio.</p>
-    <div class="flex gap-3 mb-8">
-        <input type="text" id="ug-search" placeholder="Search: artist - song" onkeydown="if(event.key==='Enter')searchUG()"
-            class="flex-1 bg-dark-700 border border-gray-800 rounded-xl px-4 py-2.5 text-sm text-gray-300 placeholder-gray-600 focus:border-accent/50 outline-none">
-        <button onclick="searchUG()" class="bg-accent hover:bg-accent-light px-6 py-2.5 rounded-xl text-sm font-semibold text-white transition">Search</button>
+    <p class="text-gray-500 mb-8">Search Ultimate Guitar for Guitar Pro tabs and convert them into playable CDLC.</p>
+
+    <!-- Search bar -->
+    <div id="ug-search-section">
+        <div class="flex gap-3 mb-8">
+            <input type="text" id="ug-search" placeholder="Search: artist - song" onkeydown="if(event.key==='Enter')searchUG()"
+                class="flex-1 bg-dark-700 border border-gray-800 rounded-xl px-4 py-2.5 text-sm text-gray-300 placeholder-gray-600 focus:border-accent/50 outline-none">
+            <button onclick="searchUG()" class="bg-accent hover:bg-accent-light px-6 py-2.5 rounded-xl text-sm font-semibold text-white transition">Search</button>
+        </div>
+        <div id="ug-list" class="space-y-2"></div>
     </div>
-    <div id="ug-list" class="space-y-2"></div>
+
+    <!-- Configure panel (shown after selecting a tab) -->
+    <div id="ug-configure" class="hidden">
+        <div class="bg-dark-700 border border-gray-800 rounded-xl p-5 mb-6">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-sm font-semibold text-white" id="ug-selected-name"></h3>
+                <button onclick="ugBackToSearch()" class="text-xs text-gray-500 hover:text-white">Change tab</button>
+            </div>
+
+            <!-- Audio option picker -->
+            <div class="bg-dark-600/50 rounded-xl p-4 mb-5">
+                <h4 class="text-xs text-gray-400 uppercase tracking-wider mb-3">Audio Source</h4>
+                <div class="flex gap-3 mb-3">
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="radio" name="ug-audio-mode" value="midi" checked
+                            onchange="ugToggleAudioMode()" class="accent-accent">
+                        <span class="text-sm text-gray-300">MIDI (generated from tab)</span>
+                    </label>
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="radio" name="ug-audio-mode" value="real"
+                            onchange="ugToggleAudioMode()" class="accent-accent">
+                        <span class="text-sm text-gray-300">Real audio file</span>
+                    </label>
+                </div>
+
+                <!-- Real audio section (hidden by default) -->
+                <div id="ug-audio-section" class="hidden">
+                    <p class="text-xs text-gray-600 mb-3">Add a real recording. Chart timing will auto-sync to the audio.</p>
+                    <div class="flex gap-3 items-start">
+                        <!-- Audio drop zone / file picker -->
+                        <div id="ug-audio-dropzone" class="flex-1 border border-dashed border-gray-700 rounded-xl p-4 text-center transition hover:border-accent/40 cursor-pointer">
+                            <svg class="w-8 h-8 mx-auto mb-2 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"/></svg>
+                            <p class="text-gray-500 text-xs" id="ug-audio-label">Drop audio or click to browse</p>
+                            <p class="text-gray-700 text-xs mt-1">MP3, OGG, WAV, FLAC</p>
+                            <input type="file" id="ug-audio-file-input" accept=".mp3,.ogg,.wav,.flac" class="hidden">
+                        </div>
+                        <!-- Or local path -->
+                        <div class="flex-1">
+                            <label class="text-xs text-gray-500 mb-1 block">Or enter a local file path:</label>
+                            <input type="text" id="ug-audio-path" placeholder="/path/to/song.mp3"
+                                class="w-full bg-dark-600 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-300 outline-none focus:border-accent/50 placeholder-gray-700">
+                        </div>
+                    </div>
+                    <div id="ug-audio-status" class="mt-2 text-xs text-gray-600 hidden"></div>
+                </div>
+            </div>
+
+            <!-- Stem separation option (hidden unless real audio selected) -->
+            <div id="ug-stem-section" class="hidden bg-dark-600/50 rounded-xl p-4 mb-5">
+                <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" id="ug-stem-check" class="accent-accent"
+                        onchange="ugToggleStemOptions()">
+                    <span class="text-sm text-gray-300">Split stems with Demucs</span>
+                    <span class="text-xs text-gray-600">(requires Replicate API key)</span>
+                </label>
+                <div id="ug-stem-options" class="hidden mt-3">
+                    <label class="text-xs text-gray-500 mb-1 block">Replicate API Key</label>
+                    <input type="password" id="ug-replicate-key" placeholder="r8_..."
+                        class="w-full bg-dark-600 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-300 outline-none focus:border-accent/50 placeholder-gray-700">
+                    <p class="text-xs text-gray-600 mt-1">Get a key at replicate.com/account/api-tokens</p>
+                </div>
+            </div>
+
+            <button onclick="ugBuild()" class="bg-accent hover:bg-accent-light px-6 py-2.5 rounded-xl text-sm font-semibold text-white transition">Build CDLC</button>
+        </div>
+    </div>
+
+    <!-- Build progress -->
+    <div id="ug-progress" class="hidden">
+        <div class="progress-bar mb-3"><div class="fill" id="ug-bar" style="width:0%"></div></div>
+        <p class="text-xs text-gray-500" id="ug-stage">Starting...</p>
+        <div id="ug-progress-log" class="mt-3 space-y-1 max-h-40 overflow-y-auto"></div>
+    </div>
+
+    <!-- Result -->
+    <div id="ug-result" class="hidden"></div>
 </div>
